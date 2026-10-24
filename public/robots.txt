@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://weblyfy.in/sitemap.xml
+Sitemap: https://www.weblyfy.in/sitemap.xml
