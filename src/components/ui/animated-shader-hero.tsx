@@ -1,5 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import ElectricGazeBackground from './electric-gaze-background';
+import UnicornNebulaBackground from './unicorn-nebula-background';
 
 // Types for component props
 interface HeroProps {
@@ -23,6 +24,7 @@ interface HeroProps {
       onClick?: () => void;
     };
   };
+  unicornProjectId?: string;
   className?: string;
 }
 
@@ -330,6 +332,7 @@ const Hero: React.FC<HeroProps> = ({
   headline,
   subtitle,
   buttons,
+  unicornProjectId,
   className = ""
 }) => {
   const canvasRef = useShaderBackground();
@@ -375,7 +378,7 @@ const Hero: React.FC<HeroProps> = ({
         .animation-delay-600 { animation-delay: 0.6s; }
       `}</style>
       
-      <ElectricGazeBackground sourcePhoto="/ascii-editor/demos/generated/ref-002.webp" opacity={0.88} />
+      <UnicornNebulaBackground projectId={unicornProjectId} />
       
       {/* Hero Content Overlay */}
       <div className="absolute inset-0 z-20 flex flex-col items-center justify-center text-white px-6">
