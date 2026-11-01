@@ -13,6 +13,8 @@ import { ShaderCanvas, SHADER_SRC as NEW_SHADER } from './components/ui/launch';
 import { FloatingPaths } from './components/ui/background-paths';
 import WeblyfyLogo from './assets/images/logo.png';
 import NeuralBackground from './components/ui/flow-field-background';
+import CreationOfAdamBackground from './components/ui/creation-of-adam-background';
+import PerspectiveAsciiBackground from './components/ui/perspective-ascii-background';
 
 const SHADERS = [
   // Shader 1: Liquid Aurora / Obsidian (Need amazing platforms)
@@ -304,12 +306,9 @@ function Section({ data, index }: { data: typeof SECTIONS[0], index: number }) {
     <section id={data.id} style={{ position: 'relative' }} className="relative flex flex-col justify-end min-h-[100svh] pb-16 md:pb-32 px-5 sm:px-8 md:px-16 lg:px-24 w-full overflow-hidden">
       <div className={`absolute inset-0 z-0 bg-gradient-to-b ${data.bgColor} dark`}>
         {data.id === 'platforms' ? (
-          <ShaderCanvas fragSource={NEW_SHADER} />
+          <CreationOfAdamBackground opacity={0.85} />
         ) : data.id === 'ai' ? (
-          <>
-            <FloatingPaths position={1} />
-            <FloatingPaths position={-1} />
-          </>
+          <PerspectiveAsciiBackground opacity={0.85} />
         ) : data.id === 'automation' ? (
           <NeuralBackground color="#818cf8" trailOpacity={0.1} speed={0.8} />
         ) : null}
@@ -320,7 +319,7 @@ function Section({ data, index }: { data: typeof SECTIONS[0], index: number }) {
           initial={{ opacity: 0, y: 50 }}
           whileInView={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
-          className={`font-serif italic font-[300] text-[2.75rem] leading-[1] sm:text-6xl md:text-7xl lg:text-[8rem] xl:text-[9rem] md:leading-[0.85] tracking-tight whitespace-pre-line lowercase ${isCenter ? 'md:mx-auto md:mb-12' : ''}`}
+          className={`font-serif italic font-[300] text-[2.75rem] leading-[1] sm:text-6xl md:text-7xl lg:text-[8rem] xl:text-[9rem] md:leading-[0.85] tracking-tight whitespace-pre-line lowercase text-white drop-shadow-[0_4px_30px_rgba(0,0,0,1)] drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] ${isCenter ? 'md:mx-auto md:mb-12' : ''}`}
         >
           {data.title}
         </motion.h1>
@@ -329,20 +328,22 @@ function Section({ data, index }: { data: typeof SECTIONS[0], index: number }) {
           initial={{ opacity: 0, x: isCenter ? 0 : 50, y: isCenter ? 30 : 0 }}
           whileInView={{ opacity: 1, x: 0, y: 0 }}
           transition={{ duration: 0.8, delay: 0.4, ease: [0.16, 1, 0.3, 1] }}
-          className={`md:max-w-sm flex flex-col gap-5 md:gap-6 md:pb-4 ${isCenter ? 'items-center text-center' : ''}`}
+          className={`md:max-w-md flex flex-col gap-5 md:gap-6 md:pb-4 ${isCenter ? 'items-center text-center' : ''}`}
         >
-          <p className="text-base md:text-xl font-sans font-[300] leading-relaxed text-white/80">
-            {data.subtitle}
-          </p>
-          <button 
-            onClick={() => {
-              navigate(`/explore/${data.id}`);
-            }}
-            className="flex items-center gap-2 text-xs font-[500] tracking-[0.2em] uppercase hover:opacity-70 transition-opacity w-fit border-b border-white/30 pb-2 group"
-          >
-            Explore
-            <span className="group-hover:translate-x-2 transition-transform">→</span>
-          </button>
+          <div className="bg-black/50 backdrop-blur-md p-5 sm:p-6 rounded-2xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.6)] flex flex-col gap-4">
+            <p className="text-base md:text-lg font-sans font-[400] leading-relaxed text-white drop-shadow-md">
+              {data.subtitle}
+            </p>
+            <button 
+              onClick={() => {
+                navigate(`/explore/${data.id}`);
+              }}
+              className="flex items-center gap-2 text-xs font-[600] tracking-[0.2em] uppercase text-white hover:text-cyan-400 transition-colors w-fit border-b border-white/40 hover:border-cyan-400 pb-1.5 group mt-1"
+            >
+              Explore
+              <span className="group-hover:translate-x-2 transition-transform">→</span>
+            </button>
+          </div>
         </motion.div>
       </div>
     </section>
@@ -690,12 +691,9 @@ function ExplorePage() {
       {/* Background Component based on Section */}
       <div className="fixed inset-0 z-0 opacity-40">
         {section.id === 'platforms' ? (
-          <ShaderCanvas fragSource={NEW_SHADER} />
+          <CreationOfAdamBackground opacity={0.45} />
         ) : section.id === 'ai' ? (
-          <>
-            <FloatingPaths position={1} />
-            <FloatingPaths position={-1} />
-          </>
+          <PerspectiveAsciiBackground opacity={0.45} />
         ) : section.id === 'automation' ? (
           <NeuralBackground color="#818cf8" trailOpacity={0.1} speed={0.8} />
         ) : null}
