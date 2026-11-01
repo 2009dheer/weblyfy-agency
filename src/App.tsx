@@ -462,6 +462,7 @@ function ContactSection() {
         >
           <iframe 
             title="Earth" 
+            loading="lazy"
             frameBorder="0" 
             allowFullScreen={true} 
             allow="autoplay; fullscreen; xr-spatial-tracking" 

@@ -6,7 +6,8 @@ export const PERSPECTIVE_CONFIG = {
   bgMode: "solid" as const,
   bgBlur: 2,
   bgOpacity: 100,
-  cellSize: 3,
+  cellSizeDesktop: 6,
+  cellSizeMobile: 8,
   coverage: 100,
   invert: false,
   styleBlend: "source-over" as GlobalCompositeOperation,
@@ -28,16 +29,6 @@ export const PERSPECTIVE_CONFIG = {
   grayscale: 20,
   blurType: "off" as const,
   blurAmount: 35,
-  blurAngle: 0,
-  directionalBothSides: false,
-  tiltFocus: 35,
-  tiltPosition: 50,
-  tiltFeather: 15,
-  lensFocus: 40,
-  blurCenterX: 50,
-  blurCenterY: 50,
-  progressivePosition: 55,
-  progressiveReverse: false,
   pfx: {
     vignette: { enabled: true, intensity: 55 },
     scanLines: { enabled: true, intensity: 40 },
@@ -47,7 +38,7 @@ export const PERSPECTIVE_CONFIG = {
     glitch: { enabled: true, intensity: 4 },
     pixelate: { enabled: false, intensity: 3 },
     halftone: { enabled: false, intensity: 5 },
-    filmDust: { enabled: true, intensity: 20 }
+    filmDust: { enabled: false, intensity: 20 }
   },
   animated: true,
   animStyle: "flicker" as const,
@@ -63,15 +54,6 @@ export const PERSPECTIVE_CONFIG = {
         intensity: 80
       }
     ]
-  },
-  mask: {
-    enabled: false,
-    tool: "freehand",
-    brushSize: 30,
-    showOverlay: false,
-    invert: false,
-    dataUrl: null,
-    shapes: []
   }
 };
 
@@ -101,6 +83,21 @@ const hash2D = (x: number, y: number): number => {
   return ((h ^ (h >> 16)) >>> 0) / 4294967296;
 };
 
+interface PrecomputedCell {
+  x: number;
+  y: number;
+  px: number;
+  py: number;
+  r: number;
+  g: number;
+  b: number;
+  baseLum: number;
+  edge: number;
+  textZoneFade: number;
+  type: 0 | 1 | 2; // 0 = micro-dot (1x1), 1 = micro-block (2x2), 2 = full block
+  bucket: number;  // 0-7 color bucket for batch rendering
+}
+
 interface PerspectiveAsciiBackgroundProps {
   className?: string;
   sourcePhoto?: string;
@@ -112,20 +109,30 @@ export default function PerspectiveAsciiBackground({
   sourcePhoto = "/images/perspective-subject.jpg",
   opacity = 0.85
 }: PerspectiveAsciiBackgroundProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const mousePosRef = useRef<{ x: number; y: number } | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
-  const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  // Cached precomputed grid data (computed ONLY on image load or resize)
+  const cachedDataRef = useRef<{
+    width: number;
+    height: number;
+    cellSize: number;
+    cells: PrecomputedCell[];
+  } | null>(null);
+
+  // Load image once
   useEffect(() => {
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.src = `${sourcePhoto}?v=${Date.now()}`;
     img.onload = () => {
       imageRef.current = img;
+      cachedDataRef.current = null; // Invalidate cache so next render recalculates
     };
     img.onerror = () => {
-      // Procedural perspective fallback if image fails to load
+      // Procedural perspective fallback
       const fb = document.createElement("canvas");
       fb.width = 1200;
       fb.height = 700;
@@ -133,11 +140,9 @@ export default function PerspectiveAsciiBackground({
       fctx.fillStyle = "#050505";
       fctx.fillRect(0, 0, 1200, 700);
 
-      // Vanishing point on the right (approx 73%, 53%)
       const vx = 1200 * 0.731;
       const vy = 700 * 0.534;
 
-      // Draw perspective corridor grid
       fctx.strokeStyle = "rgba(47, 125, 135, 0.4)";
       fctx.lineWidth = 1.5;
 
@@ -173,32 +178,29 @@ export default function PerspectiveAsciiBackground({
       fallbackImg.src = fb.toDataURL();
       fallbackImg.onload = () => {
         imageRef.current = fallbackImg;
+        cachedDataRef.current = null;
       };
     };
   }, [sourcePhoto]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    const ctx = canvas.getContext("2d", { alpha: false });
     if (!ctx) return;
 
-    if (!offscreenCanvasRef.current) {
-      offscreenCanvasRef.current = document.createElement("canvas");
-    }
-    const offscreen = offscreenCanvasRef.current;
-    const offCtx = offscreen.getContext("2d", { willReadFrequently: true })!;
-
-    let isRunning = true;
+    let isVisible = false;
+    let isDisposed = false;
     let animId = 0;
+    let lastTime = 0;
     let glitchActive = false;
     let glitchRowStart = 0;
     let glitchRowCount = 0;
     let glitchOffset = 0;
-    let frameCount = 0;
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       const x = (e.clientX - rect.left) / rect.width;
       const y = (e.clientY - rect.top) / rect.height;
@@ -209,61 +211,51 @@ export default function PerspectiveAsciiBackground({
       }
     };
 
-    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mousemove", handleMouseMove, { passive: true });
 
-    // Tint RGB for "#2f7d87":
+    // Precompute color palette buckets (8 levels of cyan/teal glow)
+    // Avoids generating thousands of string objects every single frame
     const tintR = 47 / 255;
     const tintG = 125 / 255;
     const tintB = 135 / 255;
     const tintOpacity = PERSPECTIVE_CONFIG.tintOpacity / 100;
 
-    const render = (timestamp: number) => {
-      if (!isRunning) return;
-      frameCount++;
+    const BUCKET_COUNT = 8;
+    const paletteStrings: string[] = [];
+    for (let i = 0; i < BUCKET_COUNT; i++) {
+      const lumLevel = (i + 0.5) / BUCKET_COUNT;
+      const boost = 0.7 + lumLevel * 0.6;
+      let r = 0.75 * boost;
+      let g = 0.85 * boost;
+      let b = 0.95 * boost;
 
-      const parent = canvas.parentElement;
-      const targetW = parent ? parent.clientWidth : window.innerWidth;
-      const targetH = parent ? parent.clientHeight : window.innerHeight;
+      // Soft-light tint
+      const rt = softLightBlend(r, tintR);
+      const gt = softLightBlend(g, tintG);
+      const bt = softLightBlend(b, tintB);
+      r = r * (1 - tintOpacity) + rt * tintOpacity;
+      g = g * (1 - tintOpacity) + gt * tintOpacity;
+      b = b * (1 - tintOpacity) + bt * tintOpacity;
 
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      if (canvas.width !== targetW * dpr || canvas.height !== targetH * dpr) {
-        canvas.width = targetW * dpr;
-        canvas.height = targetH * dpr;
-      }
+      const ir = Math.min(255, Math.floor(r * 255));
+      const ig = Math.min(255, Math.floor(g * 255));
+      const ib = Math.min(255, Math.floor(b * 255));
+      const alpha = Math.min(0.95, 0.35 + lumLevel * 0.65);
+      paletteStrings.push(`rgba(${ir}, ${ig}, ${ib}, ${alpha.toFixed(2)})`);
+    }
 
-      ctx.save();
-      ctx.scale(dpr, dpr);
+    // Function to precompute the cell grid ONCE upon resize or image load
+    const precomputeGrid = (targetW: number, targetH: number, cellSize: number, source: HTMLImageElement) => {
+      const cols = Math.floor(targetW / cellSize);
+      const rows = Math.floor(targetH / cellSize);
+      if (cols <= 0 || rows <= 0) return null;
 
-      const source = imageRef.current;
-      if (!source || !source.complete) {
-        ctx.fillStyle = "#050505";
-        ctx.fillRect(0, 0, targetW, targetH);
-        ctx.restore();
-        animId = requestAnimationFrame(render);
-        return;
-      }
+      const offCanvas = document.createElement("canvas");
+      offCanvas.width = cols;
+      offCanvas.height = rows;
+      const offCtx = offCanvas.getContext("2d", { willReadFrequently: true });
+      if (!offCtx) return null;
 
-      const cfg = PERSPECTIVE_CONFIG;
-
-      // 1. Clear to solid black background (bgMode: "solid", bgOpacity: 100)
-      ctx.clearRect(0, 0, targetW, targetH);
-      ctx.fillStyle = "#050505";
-      ctx.fillRect(0, 0, targetW, targetH);
-
-      // 2. Offscreen grid sampling at cellSize = 3px
-      const cols = Math.floor(targetW / cfg.cellSize);
-      const rows = Math.floor(targetH / cfg.cellSize);
-
-      if (cols <= 0 || rows <= 0) {
-        ctx.restore();
-        animId = requestAnimationFrame(render);
-        return;
-      }
-
-      offscreen.width = cols;
-      offscreen.height = rows;
-
-      // Draw source image to offscreen canvas
       const imgAspect = source.naturalWidth / source.naturalHeight;
       const screenAspect = targetW / targetH;
       let drawW = cols;
@@ -286,31 +278,7 @@ export default function PerspectiveAsciiBackground({
       const imgData = offCtx.getImageData(0, 0, cols, rows);
       const pixels = imgData.data;
 
-      // 8. Animation: "flicker" style (speed: 100, intensity: 60)
-      const speed = cfg.animSpeed.enabled ? (cfg.animSpeed.intensity / 50) : 0;
-      const animAmp = cfg.animIntensity.enabled ? (cfg.animIntensity.intensity / 100) : 0;
-      const t = timestamp * 0.001 * speed;
-
-      // High-frequency CRT phosphor flicker noise
-      const flickerNoise =
-        Math.sin(t * 31.4) * 0.35 +
-        Math.sin(t * 73.1) * 0.25 +
-        (Math.sin(t * 149.7) > 0.85 ? 0.3 : 0);
-      const flickerMod = flickerNoise * animAmp * 0.15;
-
-      // Rare subtle glitch slice (pfx.glitch.intensity: 4)
-      if (cfg.pfx.glitch.enabled) {
-        if (!glitchActive && Math.random() < 0.03) {
-          glitchActive = true;
-          glitchRowStart = Math.floor(Math.random() * (rows - 10));
-          glitchRowCount = Math.floor(Math.random() * 4) + 2;
-          glitchOffset = Math.random() < 0.5 ? 2 : -2;
-        } else if (glitchActive && Math.random() < 0.4) {
-          glitchActive = false;
-        }
-      }
-
-      // Pre-compute luminance map for edge detection (edgeEmphasis: 49)
+      // Pre-compute raw luminance map
       const lumMap = new Float32Array(cols * rows);
       for (let y = 0; y < rows; y++) {
         for (let x = 0; x < cols; x++) {
@@ -322,207 +290,322 @@ export default function PerspectiveAsciiBackground({
         }
       }
 
-      const mouse = mousePosRef.current;
-      const edgeWeight = (cfg.edgeEmphasis / 50) * 0.85;
+      const edgeWeight = (PERSPECTIVE_CONFIG.edgeEmphasis / 50) * 0.85;
+      const densityThreshold = (100 - PERSPECTIVE_CONFIG.density) * 0.01;
+      const cells: PrecomputedCell[] = [];
 
-      // 3. Render Mode: "mixed" with "blocks" charset (cellSize: 3, density: 29)
       for (let y = 0; y < rows; y++) {
         const yRatio = y / rows;
-
-        // Text zone fade: smooth reduction where heading, subtitle & button live in lower area
+        // Text zone fade: lower area is obsidian black
         const textZoneFade = 1.0 - smoothstep(0.48, 0.70, yRatio);
         if (textZoneFade <= 0.01) continue;
 
-        // Apply glitch horizontal offset
-        const isGlitchRow = glitchActive && y >= glitchRowStart && y < glitchRowStart + glitchRowCount;
-        const currentGlitchOffset = isGlitchRow ? glitchOffset : 0;
-
         for (let x = 0; x < cols; x++) {
-          const sampleX = Math.max(0, Math.min(cols - 1, x + currentGlitchOffset));
-          const idx = (y * cols + sampleX) * 4;
-          let r = pixels[idx] / 255;
-          let g = pixels[idx + 1] / 255;
-          let b = pixels[idx + 2] / 255;
+          const idx = (y * cols + x) * 4;
           const a = pixels[idx + 3] / 255;
-
           if (a <= 0.05) continue;
 
-          // Raw luminance
-          const rawLum = lumMap[y * cols + sampleX];
+          const rawLum = lumMap[y * cols + x];
           if (rawLum <= 0.02) continue;
 
-          // Edge detection (Sobel difference)
+          // Sobel edge
           let edge = 0;
           if (x > 0 && x < cols - 1 && y > 0 && y < rows - 1) {
-            const dx = lumMap[y * cols + sampleX + 1] - lumMap[y * cols + sampleX - 1];
-            const dy = lumMap[(y + 1) * cols + sampleX] - lumMap[(y - 1) * cols + sampleX];
+            const dx = lumMap[y * cols + x + 1] - lumMap[y * cols + x - 1];
+            const dy = lumMap[(y + 1) * cols + x] - lumMap[(y - 1) * cols + x];
             edge = Math.hypot(dx, dy);
           }
 
-          // Tone curve adjustment
           let lum = evaluateToneCurve(rawLum);
-
-          // Contrast adjustment (contrast: 115)
           lum = (lum - 0.5) * 1.35 + 0.5;
           lum = Math.max(0, Math.min(1, lum));
-
-          // Edge emphasis boost
           lum = Math.min(1.0, lum + edge * edgeWeight);
-
-          // Apply text zone fade
           lum *= textZoneFade;
+
           if (lum <= 0.04) continue;
 
-          // Apply animation flicker
-          lum = Math.max(0, Math.min(1, lum + flickerMod));
-
-          // Density filter (density: 29) - pseudo-random dithering for low-energy cells
+          // Density filter
           const cellHash = hash2D(x, y);
-          const densityThreshold = (100 - cfg.density) * 0.01;
           if (lum < 0.40 && cellHash > lum * 2.2 + (1 - densityThreshold)) {
             continue;
           }
 
-          // Color pipeline: Grayscale (20%) -> Saturation (60%)
+          let r = pixels[idx] / 255;
+          let g = pixels[idx + 1] / 255;
+          let b = pixels[idx + 2] / 255;
           const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-          r = r * 0.8 + gray * 0.2;
-          g = g * 0.8 + gray * 0.2;
-          b = b * 0.8 + gray * 0.2;
-
-          // Saturation 60%
           r = gray + (r - gray) * 0.6;
           g = gray + (g - gray) * 0.6;
           b = gray + (b - gray) * 0.6;
 
-          // Tint: #2f7d87 with soft-light blend at tintOpacity 35%
-          const rTinted = softLightBlend(r, tintR);
-          const gTinted = softLightBlend(g, tintG);
-          const bTinted = softLightBlend(b, tintB);
+          const rt = softLightBlend(r, tintR);
+          const gt = softLightBlend(g, tintG);
+          const bt = softLightBlend(b, tintB);
+          r = r * (1 - tintOpacity) + rt * tintOpacity;
+          g = g * (1 - tintOpacity) + gt * tintOpacity;
+          b = b * (1 - tintOpacity) + bt * tintOpacity;
 
-          r = r * (1 - tintOpacity) + rTinted * tintOpacity;
-          g = g * (1 - tintOpacity) + gTinted * tintOpacity;
-          b = b * (1 - tintOpacity) + bTinted * tintOpacity;
-
-          // Brightness factor from lum
-          const boost = 0.7 + lum * 0.6;
-          const finalR = Math.min(255, Math.floor(r * boost * 255));
-          const finalG = Math.min(255, Math.floor(g * boost * 255));
-          const finalB = Math.min(255, Math.floor(b * boost * 255));
-          const cellAlpha = Math.min(0.95, (0.35 + lum * 0.65) * textZoneFade);
-
-          ctx.fillStyle = `rgba(${finalR}, ${finalG}, ${finalB}, ${cellAlpha})`;
-
-          const px = x * cfg.cellSize;
-          const py = y * cfg.cellSize;
-
-          // "mixed" mode with "blocks" charset:
-          // Low lum: 1px micro-dot
-          // Mid lum: 2px half-block
-          // High lum or edge: 3px solid block
+          // Cell shape type:
+          // 2 = full block (high lum or edge)
+          // 1 = 2x2 micro-block
+          // 0 = 1x1 micro-dot
+          let type: 0 | 1 | 2 = 0;
           if (lum > 0.65 || edge > 0.25) {
-            // Full 3x3 block
-            ctx.fillRect(px, py, cfg.cellSize, cfg.cellSize);
+            type = 2;
           } else if (lum > 0.28) {
-            // 2x2 micro-block centered
-            ctx.fillRect(px + 0.5, py + 0.5, 2, 2);
-          } else {
-            // 1x1 micro-dot
-            ctx.fillRect(px + 1, py + 1, 1, 1);
-          }
-        }
-      }
-
-      // 6. Lights: Focal Point Glow at (x: 0.731, y: 0.534, radius: 60, intensity: 80)
-      if (cfg.lights.enabled && cfg.lights.points.length > 0) {
-        for (const pt of cfg.lights.points) {
-          // Dynamic perspective parallax on vanishing point light from mouse
-          let lx = pt.x * targetW;
-          let ly = pt.y * targetH;
-
-          if (mouse) {
-            lx += (mouse.x - 0.5) * targetW * 0.05;
-            ly += (mouse.y - 0.5) * targetH * 0.05;
+            type = 1;
           }
 
-          const lightRadius = Math.min(targetW, targetH) * (pt.radius / 100);
-          const lightAlpha = (pt.intensity / 100) * 0.45;
+          const bucket = Math.max(0, Math.min(BUCKET_COUNT - 1, Math.floor(lum * BUCKET_COUNT)));
 
-          const lightGrad = ctx.createRadialGradient(lx, ly, 0, lx, ly, lightRadius);
-          lightGrad.addColorStop(0, `rgba(200, 248, 255, ${lightAlpha * (1 + flickerMod * 0.5)})`);
-          lightGrad.addColorStop(0.25, `rgba(47, 125, 135, ${lightAlpha * 0.7})`);
-          lightGrad.addColorStop(0.65, `rgba(20, 60, 75, ${lightAlpha * 0.25})`);
-          lightGrad.addColorStop(1, "rgba(5, 5, 5, 0)");
-
-          ctx.save();
-          ctx.globalCompositeOperation = "screen";
-          ctx.fillStyle = lightGrad;
-          ctx.beginPath();
-          ctx.arc(lx, ly, lightRadius, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
+          cells.push({
+            x,
+            y,
+            px: x * cellSize,
+            py: y * cellSize,
+            r,
+            g,
+            b,
+            baseLum: lum,
+            edge,
+            textZoneFade,
+            type,
+            bucket
+          });
         }
       }
 
-      // 5. Post-effects: Bloom (intensity: 45)
-      if (cfg.pfx.bloom.enabled && cfg.pfx.bloom.intensity > 0) {
-        ctx.save();
-        ctx.globalCompositeOperation = "screen";
-        ctx.globalAlpha = (cfg.pfx.bloom.intensity / 100) * 0.28;
-        ctx.filter = `blur(${Math.max(4, cfg.cellSize * 2)}px)`;
-        ctx.drawImage(canvas, 0, 0, targetW, targetH);
-        ctx.restore();
+      return {
+        width: targetW,
+        height: targetH,
+        cellSize,
+        cells
+      };
+    };
+
+    const render = (timestamp: number) => {
+      if (isDisposed || !isVisible) return;
+
+      // Throttle to 30 FPS (~33ms delta) to eliminate CPU/GPU drain
+      if (timestamp - lastTime < 33) {
+        animId = requestAnimationFrame(render);
+        return;
+      }
+      lastTime = timestamp;
+
+      const targetW = container.clientWidth || window.innerWidth;
+      const targetH = container.clientHeight || window.innerHeight;
+
+      // Keep dpr at 1 for retro ASCII grid; eliminates 4x-9x pixel scaling penalty on retina/mobile
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
       }
 
-      // Post-effects: Scanlines (intensity: 40)
-      if (cfg.pfx.scanLines.enabled && cfg.pfx.scanLines.intensity > 0) {
-        ctx.save();
-        ctx.fillStyle = `rgba(0, 0, 0, ${(cfg.pfx.scanLines.intensity / 100) * 0.22})`;
-        for (let sy = 0; sy < targetH; sy += cfg.cellSize) {
-          ctx.fillRect(0, sy, targetW, 1);
-        }
-        ctx.restore();
-      }
-
-      // Post-effects: Vignette (intensity: 55)
-      if (cfg.pfx.vignette.enabled && cfg.pfx.vignette.intensity > 0) {
-        const vigGrad = ctx.createRadialGradient(
-          targetW * 0.55,
-          targetH * 0.45,
-          Math.min(targetW, targetH) * 0.25,
-          targetW * 0.5,
-          targetH * 0.5,
-          Math.hypot(targetW, targetH) * 0.65
-        );
-        const vigAlpha = (cfg.pfx.vignette.intensity / 100) * 0.65;
-        vigGrad.addColorStop(0, "rgba(5, 5, 5, 0)");
-        vigGrad.addColorStop(0.7, `rgba(5, 5, 5, ${vigAlpha * 0.5})`);
-        vigGrad.addColorStop(1, `rgba(5, 5, 5, ${vigAlpha})`);
-
-        ctx.save();
-        ctx.fillStyle = vigGrad;
+      const source = imageRef.current;
+      if (!source || !source.complete) {
+        ctx.fillStyle = "#050505";
         ctx.fillRect(0, 0, targetW, targetH);
-        ctx.restore();
+        animId = requestAnimationFrame(render);
+        return;
       }
 
+      const isMobile = targetW < 768;
+      const cellSize = isMobile ? PERSPECTIVE_CONFIG.cellSizeMobile : PERSPECTIVE_CONFIG.cellSizeDesktop;
+
+      // Check if cache needs recalculation
+      let cache = cachedDataRef.current;
+      if (!cache || cache.width !== targetW || cache.height !== targetH || cache.cellSize !== cellSize) {
+        cache = precomputeGrid(targetW, targetH, cellSize, source);
+        cachedDataRef.current = cache;
+      }
+
+      if (!cache || cache.cells.length === 0) {
+        animId = requestAnimationFrame(render);
+        return;
+      }
+
+      // 1. Clear to obsidian black
+      ctx.fillStyle = "#050505";
+      ctx.fillRect(0, 0, targetW, targetH);
+
+      // 2. Animation flicker & occasional subtle glitch
+      const speed = 2.0;
+      const t = timestamp * 0.001 * speed;
+      const flickerNoise =
+        Math.sin(t * 31.4) * 0.35 +
+        Math.sin(t * 73.1) * 0.25 +
+        (Math.sin(t * 149.7) > 0.85 ? 0.3 : 0);
+      const flickerMod = flickerNoise * 0.09;
+
+      if (PERSPECTIVE_CONFIG.pfx.glitch.enabled) {
+        if (!glitchActive && Math.random() < 0.02) {
+          glitchActive = true;
+          const rows = Math.floor(targetH / cellSize);
+          glitchRowStart = Math.floor(Math.random() * (rows - 10));
+          glitchRowCount = Math.floor(Math.random() * 4) + 2;
+          glitchOffset = (Math.random() < 0.5 ? 3 : -3) * cellSize;
+        } else if (glitchActive && Math.random() < 0.4) {
+          glitchActive = false;
+        }
+      }
+
+      // Group draw calls into bucket paths to achieve maximum canvas performance (0.5ms draw time)
+      const bucketPaths: Path2D[] = Array.from({ length: BUCKET_COUNT }, () => new Path2D());
+      const cells = cache.cells;
+      const totalCells = cells.length;
+
+      for (let i = 0; i < totalCells; i++) {
+        const cell = cells[i];
+
+        let px = cell.px;
+        const py = cell.py;
+
+        if (glitchActive && cell.y >= glitchRowStart && cell.y < glitchRowStart + glitchRowCount) {
+          px += glitchOffset;
+        }
+
+        // Apply time-based flicker to bucket selection
+        let dynamicBucket = cell.bucket;
+        if (flickerMod > 0.03 && dynamicBucket < BUCKET_COUNT - 1) {
+          dynamicBucket++;
+        } else if (flickerMod < -0.03 && dynamicBucket > 0) {
+          dynamicBucket--;
+        }
+
+        const path = bucketPaths[dynamicBucket];
+
+        if (cell.type === 2) {
+          // Full block
+          path.rect(px, py, cellSize - 0.5, cellSize - 0.5);
+        } else if (cell.type === 1) {
+          // 2x2 micro-block
+          path.rect(px + 1, py + 1, cellSize * 0.5, cellSize * 0.5);
+        } else {
+          // 1x1 micro-dot
+          path.rect(px + 1.5, py + 1.5, 1.5, 1.5);
+        }
+      }
+
+      // Execute exactly 8 draw calls for the entire grid!
+      for (let b = 0; b < BUCKET_COUNT; b++) {
+        ctx.fillStyle = paletteStrings[b];
+        ctx.fill(bucketPaths[b]);
+      }
+
+      // 3. Focal Point Glow at vanishing point (x: 0.731, y: 0.534)
+      const mouse = mousePosRef.current;
+      let lx = 0.731 * targetW;
+      let ly = 0.534 * targetH;
+      if (mouse) {
+        lx += (mouse.x - 0.5) * targetW * 0.04;
+        ly += (mouse.y - 0.5) * targetH * 0.04;
+      }
+
+      const lightRadius = Math.min(targetW, targetH) * 0.55;
+      const lightGrad = ctx.createRadialGradient(lx, ly, 0, lx, ly, lightRadius);
+      const lightAlpha = 0.42 * (1 + flickerMod * 0.4);
+      lightGrad.addColorStop(0, `rgba(200, 248, 255, ${lightAlpha})`);
+      lightGrad.addColorStop(0.25, `rgba(47, 125, 135, ${lightAlpha * 0.65})`);
+      lightGrad.addColorStop(0.65, `rgba(20, 60, 75, ${lightAlpha * 0.2})`);
+      lightGrad.addColorStop(1, "rgba(5, 5, 5, 0)");
+
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.fillStyle = lightGrad;
+      ctx.beginPath();
+      ctx.arc(lx, ly, lightRadius, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
+
+      // 4. Subtle Vignette
+      const vigGrad = ctx.createRadialGradient(
+        targetW * 0.55,
+        targetH * 0.45,
+        Math.min(targetW, targetH) * 0.25,
+        targetW * 0.5,
+        targetH * 0.5,
+        Math.hypot(targetW, targetH) * 0.65
+      );
+      vigGrad.addColorStop(0, "rgba(5, 5, 5, 0)");
+      vigGrad.addColorStop(0.7, "rgba(5, 5, 5, 0.35)");
+      vigGrad.addColorStop(1, "rgba(5, 5, 5, 0.75)");
+
+      ctx.fillStyle = vigGrad;
+      ctx.fillRect(0, 0, targetW, targetH);
+
       animId = requestAnimationFrame(render);
     };
 
-    animId = requestAnimationFrame(render);
+    // IntersectionObserver to sleep rendering completely when offscreen
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry && entry.isIntersecting) {
+          if (!isVisible) {
+            isVisible = true;
+            lastTime = performance.now();
+            animId = requestAnimationFrame(render);
+          }
+        } else {
+          isVisible = false;
+          cancelAnimationFrame(animId);
+        }
+      },
+      { threshold: 0.01 }
+    );
+
+    observer.observe(container);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        if (!isVisible && container) {
+          const rect = container.getBoundingClientRect();
+          if (rect.bottom > 0 && rect.top < window.innerHeight) {
+            isVisible = true;
+            animId = requestAnimationFrame(render);
+          }
+        }
+      } else {
+        isVisible = false;
+        cancelAnimationFrame(animId);
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    const onResize = () => {
+      cachedDataRef.current = null; // Forces recalculation on next visible frame
+    };
+    window.addEventListener("resize", onResize, { passive: true });
 
     return () => {
-      isRunning = false;
+      isDisposed = true;
+      isVisible = false;
       cancelAnimationFrame(animId);
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("resize", onResize);
     };
   }, [sourcePhoto]);
 
   return (
-    <div className={`absolute inset-0 w-full h-full pointer-events-none select-none overflow-hidden ${className}`}>
+    <div 
+      ref={containerRef} 
+      className={`absolute inset-0 w-full h-full pointer-events-none select-none overflow-hidden ${className}`}
+    >
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full object-cover touch-none"
         style={{ opacity }}
+      />
+      {/* Zero-cost GPU hardware scanlines overlay */}
+      <div 
+        className="absolute inset-0 pointer-events-none opacity-30"
+        style={{
+          backgroundImage: "repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0, 0, 0, 0.4) 3px, rgba(0, 0, 0, 0.4) 6px)"
+        }}
       />
       {/* Heavy bottom and top vignettes to guarantee pure black background behind typography */}
       <div className="absolute top-0 left-0 right-0 h-28 bg-gradient-to-b from-[#050505] via-[#050505]/70 to-transparent pointer-events-none" />

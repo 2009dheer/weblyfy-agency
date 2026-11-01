@@ -6,7 +6,8 @@ export const ADAM_CONFIG = {
   bgMode: "none" as const,
   bgBlur: 12,
   bgOpacity: 90,
-  cellSize: 9,
+  cellSizeDesktop: 8,
+  cellSizeMobile: 10,
   coverage: 100,
   invert: false,
   styleBlend: "source-over" as GlobalCompositeOperation,
@@ -28,33 +29,12 @@ export const ADAM_CONFIG = {
   blurType: "off" as const,
   blurAmount: 35,
   pfx: {
-    vignette: { enabled: false, intensity: 38 },
-    scanLines: { enabled: false, intensity: 40 },
-    chromatic: { enabled: false, intensity: 15 },
     bloom: { enabled: true, intensity: 25 },
-    filmGrain: { enabled: false, intensity: 30 },
-    glitch: { enabled: false, intensity: 20 },
-    pixelate: { enabled: false, intensity: 15 },
-    halftone: { enabled: false, intensity: 20 },
-    filmDust: { enabled: false, intensity: 20 }
   },
   animated: true,
   animStyle: "pulse" as const,
   animSpeed: { enabled: true, intensity: 100 },
-  animIntensity: { enabled: true, intensity: 60 },
-  lights: {
-    enabled: false,
-    points: [] as { x: number; y: number; radius: number; intensity: number }[]
-  },
-  mask: {
-    enabled: false,
-    tool: "freehand",
-    brushSize: 30,
-    showOverlay: false,
-    invert: false,
-    dataUrl: null,
-    shapes: []
-  }
+  animIntensity: { enabled: true, intensity: 60 }
 };
 
 // 8x8 Bayer Ordered Dither Matrix normalized to [0, 1]
@@ -74,6 +54,16 @@ const smoothstep = (min: number, max: number, value: number) => {
   return x * x * (3 - 2 * x);
 };
 
+interface PrecomputedAdamPoint {
+  cx: number;
+  cy: number;
+  normX: number;
+  normY: number;
+  baseLum: number;
+  bayerThresh: number;
+  textZoneFade: number;
+}
+
 interface CreationOfAdamBackgroundProps {
   className?: string;
   sourcePhoto?: string;
@@ -85,10 +75,18 @@ export default function CreationOfAdamBackground({
   sourcePhoto = "/images/creation-of-adam.jpg",
   opacity = 0.85
 }: CreationOfAdamBackgroundProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const mousePosRef = useRef<{ x: number; y: number } | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
-  const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Cached precomputed points
+  const cachedDataRef = useRef<{
+    width: number;
+    height: number;
+    cellSize: number;
+    points: PrecomputedAdamPoint[];
+  } | null>(null);
 
   useEffect(() => {
     const img = new Image();
@@ -96,26 +94,24 @@ export default function CreationOfAdamBackground({
     img.src = `${sourcePhoto}?v=${Date.now()}`;
     img.onload = () => {
       imageRef.current = img;
+      cachedDataRef.current = null;
     };
   }, [sourcePhoto]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    const ctx = canvas.getContext("2d", { alpha: false });
     if (!ctx) return;
 
-    if (!offscreenCanvasRef.current) {
-      offscreenCanvasRef.current = document.createElement("canvas");
-    }
-    const offscreen = offscreenCanvasRef.current;
-    const offCtx = offscreen.getContext("2d", { willReadFrequently: true })!;
-
-    let isRunning = true;
+    let isVisible = false;
+    let isDisposed = false;
     let animId = 0;
+    let lastTime = 0;
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       const x = (e.clientX - rect.left) / rect.width;
       const y = (e.clientY - rect.top) / rect.height;
@@ -126,62 +122,28 @@ export default function CreationOfAdamBackground({
       }
     };
 
-    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mousemove", handleMouseMove, { passive: true });
 
-    const render = (timestamp: number) => {
-      if (!isRunning) return;
+    // Precompute active hand points ONCE on load or resize
+    const precomputePoints = (targetW: number, targetH: number, cellSize: number, source: HTMLImageElement) => {
+      const cols = Math.floor(targetW / cellSize);
+      const rows = Math.floor(targetH / cellSize);
+      if (cols <= 0 || rows <= 0) return null;
 
-      const parent = canvas.parentElement;
-      const targetW = parent ? parent.clientWidth : window.innerWidth;
-      const targetH = parent ? parent.clientHeight : window.innerHeight;
+      const offCanvas = document.createElement("canvas");
+      offCanvas.width = cols;
+      offCanvas.height = rows;
+      const offCtx = offCanvas.getContext("2d", { willReadFrequently: true });
+      if (!offCtx) return null;
 
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      if (canvas.width !== targetW * dpr || canvas.height !== targetH * dpr) {
-        canvas.width = targetW * dpr;
-        canvas.height = targetH * dpr;
-      }
-
-      ctx.save();
-      ctx.scale(dpr, dpr);
-
-      const source = imageRef.current;
-      if (!source || !source.complete) {
-        ctx.fillStyle = "#050505";
-        ctx.fillRect(0, 0, targetW, targetH);
-        ctx.restore();
-        animId = requestAnimationFrame(render);
-        return;
-      }
-
-      const cfg = ADAM_CONFIG;
-
-      // 1. Clear Section to Pure Obsidian Black (#050505)
-      ctx.clearRect(0, 0, targetW, targetH);
-      ctx.fillStyle = "#050505";
-      ctx.fillRect(0, 0, targetW, targetH);
-
-      // 2. Offscreen sampling grid at cellSize resolution
-      const cols = Math.floor(targetW / cfg.cellSize);
-      const rows = Math.floor(targetH / cfg.cellSize);
-
-      if (cols <= 0 || rows <= 0) {
-        ctx.restore();
-        animId = requestAnimationFrame(render);
-        return;
-      }
-
-      offscreen.width = cols;
-      offscreen.height = rows;
-
-      // Position hands across the upper 60% of the viewport (y: 8% to 58%)
-      // so the bottom 40% remains completely clear for the title, subtitle, and explore button
+      // Position hands across upper 70% of viewport
       const imgAspect = source.naturalWidth / source.naturalHeight;
       const displayHeight = rows * 0.72;
       const displayAspect = cols / displayHeight;
       let drawW = cols;
       let drawH = displayHeight;
       let drawX = 0;
-      let drawY = rows * 0.04; // upper region placement
+      let drawY = rows * 0.04;
 
       if (imgAspect > displayAspect) {
         drawW = displayHeight * imgAspect;
@@ -198,122 +160,233 @@ export default function CreationOfAdamBackground({
       const imgData = offCtx.getImageData(0, 0, cols, rows);
       const pixels = imgData.data;
 
-      // 8. Animation: Pulse oscillation (animStyle: "pulse", speed: 100, intensity: 60)
-      const speed = cfg.animSpeed.enabled ? (cfg.animSpeed.intensity / 50) : 0;
-      const t = timestamp * 0.001 * speed;
-      const animAmp = cfg.animIntensity.enabled ? (cfg.animIntensity.intensity / 100) : 0;
-      const pulseWave = Math.sin(t * 2.2) * 0.5 + 0.5;
-      const pulseMod = (pulseWave - 0.5) * animAmp * 0.25;
+      const points: PrecomputedAdamPoint[] = [];
 
-      ctx.globalCompositeOperation = cfg.styleBlend;
-      const mouse = mousePosRef.current;
-
-      // 3. Draw Dither Grid
       for (let y = 0; y < rows; y++) {
         const yRatio = y / rows;
-
-        // Bottom text zone fade: fade out completely where "need amazing platforms" and subtitle live
-        // Fully active in upper half, smoothly fades out between 48% and 68% height
+        // Text zone fade: upper half active, fades out between 48% and 68%
         const textZoneFade = 1.0 - smoothstep(0.48, 0.68, yRatio);
         if (textZoneFade <= 0.01) continue;
 
         for (let x = 0; x < cols; x++) {
           const idx = (y * cols + x) * 4;
+          const a = pixels[idx + 3] / 255;
+          if (a <= 0.05) continue;
+
           const r = pixels[idx];
           const g = pixels[idx + 1];
           const b = pixels[idx + 2];
-          const a = pixels[idx + 3] / 255;
-
-          if (a <= 0.05) continue;
-
-          // Our reference image has a 100% pure black background (#000000)
-          // Luminance formula: ITU-R BT.601
           const rawLum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
 
-          // Pure black background pixels have rawLum ~ 0.0. Skip immediately!
+          // Pure black background pixels skipped immediately
           if (rawLum <= 0.04) continue;
 
-          // Contrast 158 enhancement: stretch hand details and contours
+          // Contrast 158 enhancement
           let lum = (rawLum - 0.04) / 0.92;
           lum = Math.pow(Math.max(0, lum), 1.15) * 1.25;
           lum = Math.min(1.0, Math.max(0.0, lum));
-
-          // Apply text-zone fade so lower pixels drop cleanly
           lum *= textZoneFade;
-          if (lum <= 0.05) continue;
 
-          // Pulse animation on the reaching fingers and muscles
-          lum = Math.min(1.0, Math.max(0.0, lum + pulseMod * 0.2));
+          if (lum <= 0.04) continue;
 
-          // Interactive mouse proximity glow around the fingertips
-          if (mouse) {
-            const cellNormX = x / cols;
-            const cellNormY = y / rows;
-            const dist = Math.hypot(cellNormX - mouse.x, cellNormY - mouse.y);
-            if (dist < 0.22) {
-              const mouseBoost = (1 - dist / 0.22) * 0.35;
-              lum = Math.min(1.0, lum + mouseBoost);
-            }
-          }
+          const bayerThresh = BAYER_8X8[y % 8][x % 8] * 0.85;
 
-          // Bayer Ordered Dithering (8x8)
-          const bayerThreshold = BAYER_8X8[y % 8][x % 8];
-          const isDitherLit = lum > (bayerThreshold * 0.85);
-
-          if (!isDitherLit) continue;
-
-          // Dot sizing: between 1.5px and (cellSize - 1px)
-          const px = x * cfg.cellSize;
-          const py = y * cfg.cellSize;
-          const dotSize = Math.max(1.5, cfg.cellSize * (0.35 + lum * 0.5));
-          const cx = px + cfg.cellSize / 2;
-          const cy = py + cfg.cellSize / 2;
-
-          // Electric cyan / blue dither aesthetic (#3ca6ff) with luminous white highlights
-          const dotAlpha = Math.min(0.95, (0.35 + lum * 0.6) * textZoneFade);
-
-          if (lum > 0.72) {
-            // Brightest highlights: crisp electric white-cyan (#e0f7ff)
-            ctx.fillStyle = `rgba(225, 247, 255, ${dotAlpha})`;
-          } else if (lum > 0.35) {
-            // Midtones: signature electric blue (#3ca6ff)
-            ctx.fillStyle = `rgba(60, 166, 255, ${dotAlpha * 0.9})`;
-          } else {
-            // Shadows: deep cyber cobalt (#1e6bb8)
-            ctx.fillStyle = `rgba(30, 107, 184, ${dotAlpha * 0.75})`;
-          }
-
-          ctx.beginPath();
-          ctx.arc(cx, cy, dotSize / 2, 0, Math.PI * 2);
-          ctx.fill();
+          points.push({
+            cx: x * cellSize + cellSize / 2,
+            cy: y * cellSize + cellSize / 2,
+            normX: x / cols,
+            normY: y / rows,
+            baseLum: lum,
+            bayerThresh,
+            textZoneFade
+          });
         }
       }
 
-      // 5. Post-effects: Subtle Bloom on illuminated hands
-      if (cfg.pfx.bloom.enabled && cfg.pfx.bloom.intensity > 0) {
-        ctx.save();
-        ctx.globalCompositeOperation = "screen";
-        ctx.globalAlpha = (cfg.pfx.bloom.intensity / 100) * 0.3;
-        ctx.filter = `blur(${Math.max(4, cfg.cellSize * 1.5)}px)`;
-        ctx.drawImage(canvas, 0, 0, targetW, targetH);
-        ctx.restore();
+      return {
+        width: targetW,
+        height: targetH,
+        cellSize,
+        points
+      };
+    };
+
+    const render = (timestamp: number) => {
+      if (isDisposed || !isVisible) return;
+
+      // Throttle to 30 FPS (~33ms delta)
+      if (timestamp - lastTime < 33) {
+        animId = requestAnimationFrame(render);
+        return;
+      }
+      lastTime = timestamp;
+
+      const targetW = container.clientWidth || window.innerWidth;
+      const targetH = container.clientHeight || window.innerHeight;
+
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
       }
 
+      const source = imageRef.current;
+      if (!source || !source.complete) {
+        ctx.fillStyle = "#050505";
+        ctx.fillRect(0, 0, targetW, targetH);
+        animId = requestAnimationFrame(render);
+        return;
+      }
+
+      const isMobile = targetW < 768;
+      const cellSize = isMobile ? ADAM_CONFIG.cellSizeMobile : ADAM_CONFIG.cellSizeDesktop;
+
+      let cache = cachedDataRef.current;
+      if (!cache || cache.width !== targetW || cache.height !== targetH || cache.cellSize !== cellSize) {
+        cache = precomputePoints(targetW, targetH, cellSize, source);
+        cachedDataRef.current = cache;
+      }
+
+      if (!cache || cache.points.length === 0) {
+        animId = requestAnimationFrame(render);
+        return;
+      }
+
+      // 1. Clear Section to Pure Obsidian Black
+      ctx.fillStyle = "#050505";
+      ctx.fillRect(0, 0, targetW, targetH);
+
+      // 2. Pulse wave
+      const speed = 2.0;
+      const t = timestamp * 0.001 * speed;
+      const pulseWave = Math.sin(t * 2.2) * 0.5 + 0.5;
+      const pulseMod = (pulseWave - 0.5) * 0.12;
+
+      const mouse = mousePosRef.current;
+
+      // Batch all dither dots into exactly 3 paths by color tier
+      const highlightPath = new Path2D();
+      const midtonePath = new Path2D();
+      const shadowPath = new Path2D();
+
+      const points = cache.points;
+      const totalPoints = points.length;
+
+      for (let i = 0; i < totalPoints; i++) {
+        const pt = points[i];
+        let lum = pt.baseLum + pulseMod;
+
+        // Interactive mouse glow
+        if (mouse) {
+          const dist = Math.hypot(pt.normX - mouse.x, pt.normY - mouse.y);
+          if (dist < 0.22) {
+            lum += (1 - dist / 0.22) * 0.35;
+          }
+        }
+
+        if (lum <= pt.bayerThresh) continue;
+
+        const dotRadius = Math.max(0.75, (cellSize * (0.35 + lum * 0.5)) * 0.5);
+        const cx = pt.cx;
+        const cy = pt.cy;
+
+        if (lum > 0.72) {
+          highlightPath.moveTo(cx + dotRadius, cy);
+          highlightPath.arc(cx, cy, dotRadius, 0, Math.PI * 2);
+        } else if (lum > 0.35) {
+          midtonePath.moveTo(cx + dotRadius, cy);
+          midtonePath.arc(cx, cy, dotRadius, 0, Math.PI * 2);
+        } else {
+          shadowPath.moveTo(cx + dotRadius, cy);
+          shadowPath.arc(cx, cy, dotRadius, 0, Math.PI * 2);
+        }
+      }
+
+      // Execute exactly 3 draw calls for all dither dots!
+      ctx.fillStyle = "rgba(30, 107, 184, 0.75)";
+      ctx.fill(shadowPath);
+
+      ctx.fillStyle = "rgba(60, 166, 255, 0.90)";
+      ctx.fill(midtonePath);
+
+      ctx.fillStyle = "rgba(225, 247, 255, 0.95)";
+      ctx.fill(highlightPath);
+
+      // Subtle atmospheric glow between touching fingertips (x: ~50%, y: ~30%)
+      const fingertipGlow = ctx.createRadialGradient(
+        targetW * 0.48, targetH * 0.32, 10,
+        targetW * 0.48, targetH * 0.32, targetW * 0.25
+      );
+      fingertipGlow.addColorStop(0, "rgba(60, 166, 255, 0.15)");
+      fingertipGlow.addColorStop(0.5, "rgba(30, 107, 184, 0.05)");
+      fingertipGlow.addColorStop(1, "rgba(5, 5, 5, 0)");
+
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.fillStyle = fingertipGlow;
+      ctx.fillRect(0, 0, targetW, targetH);
       ctx.restore();
+
       animId = requestAnimationFrame(render);
     };
 
-    animId = requestAnimationFrame(render);
+    // IntersectionObserver to pause rendering when offscreen
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry && entry.isIntersecting) {
+          if (!isVisible) {
+            isVisible = true;
+            lastTime = performance.now();
+            animId = requestAnimationFrame(render);
+          }
+        } else {
+          isVisible = false;
+          cancelAnimationFrame(animId);
+        }
+      },
+      { threshold: 0.01 }
+    );
+
+    observer.observe(container);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        if (!isVisible && container) {
+          const rect = container.getBoundingClientRect();
+          if (rect.bottom > 0 && rect.top < window.innerHeight) {
+            isVisible = true;
+            animId = requestAnimationFrame(render);
+          }
+        }
+      } else {
+        isVisible = false;
+        cancelAnimationFrame(animId);
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    const onResize = () => {
+      cachedDataRef.current = null;
+    };
+    window.addEventListener("resize", onResize, { passive: true });
 
     return () => {
-      isRunning = false;
+      isDisposed = true;
+      isVisible = false;
       cancelAnimationFrame(animId);
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("resize", onResize);
     };
   }, [sourcePhoto]);
 
   return (
-    <div className={`absolute inset-0 w-full h-full pointer-events-none select-none overflow-hidden ${className}`}>
+    <div 
+      ref={containerRef} 
+      className={`absolute inset-0 w-full h-full pointer-events-none select-none overflow-hidden ${className}`}
+    >
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full object-cover touch-none"
