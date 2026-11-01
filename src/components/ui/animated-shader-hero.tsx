@@ -1,4 +1,5 @@
 import React, { useRef, useEffect } from 'react';
+import ElectricGazeBackground from './electric-gaze-background';
 
 // Types for component props
 interface HeroProps {
@@ -374,13 +375,7 @@ const Hero: React.FC<HeroProps> = ({
         .animation-delay-600 { animation-delay: 0.6s; }
       `}</style>
       
-      <canvas
-        ref={canvasRef}
-        className="absolute inset-0 w-full h-full object-contain touch-none opacity-80"
-        style={{ background: '#020202' }}
-      />
-      
-      <div className="absolute inset-0 bg-gradient-to-b from-black/0 via-transparent to-[#050505] z-10 pointer-events-none" />
+      <ElectricGazeBackground sourcePhoto="/ascii-editor/demos/generated/ref-002.webp" opacity={0.88} />
       
       {/* Hero Content Overlay */}
       <div className="absolute inset-0 z-20 flex flex-col items-center justify-center text-white px-6">

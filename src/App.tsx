@@ -13,7 +13,6 @@ import { ShaderCanvas, SHADER_SRC as NEW_SHADER } from './components/ui/launch';
 import { FloatingPaths } from './components/ui/background-paths';
 import WeblyfyLogo from './assets/images/logo.png';
 import NeuralBackground from './components/ui/flow-field-background';
-import ElectricGazeAscii from './components/ui/electric-gaze-ascii';
 
 const SHADERS = [
   // Shader 1: Liquid Aurora / Obsidian (Need amazing platforms)
@@ -261,7 +260,7 @@ function Navigation() {
             </button>
 
             <div className="flex flex-col items-center gap-4 sm:gap-6 md:gap-8 w-full max-h-[80vh] overflow-y-auto overflow-x-hidden no-scrollbar">
-              {['Home', 'neural-raster', ...SECTIONS.map(s => s.id), 'work', 'Contact'].map((item, i) => (
+              {['Home', ...SECTIONS.map(s => s.id), 'work', 'Contact'].map((item, i) => (
                 <motion.div
                   key={item}
                   initial={{ opacity: 0, y: 40 }}
@@ -657,9 +656,6 @@ function MainScreen() {
         <Hero
           logoSrc={WeblyfyLogo}
         />
-      </div>
-      <div id="neural-raster">
-        <ElectricGazeAscii />
       </div>
       {SECTIONS.map((section, idx) => (
          <Section key={section.id} data={section} index={idx} />
