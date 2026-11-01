@@ -1,6 +1,4 @@
 import React, { useRef, useEffect } from 'react';
-import ElectricGazeBackground from './electric-gaze-background';
-import UnicornNebulaBackground from './unicorn-nebula-background';
 
 // Types for component props
 interface HeroProps {
@@ -378,7 +376,13 @@ const Hero: React.FC<HeroProps> = ({
         .animation-delay-600 { animation-delay: 0.6s; }
       `}</style>
       
-      <UnicornNebulaBackground projectId={unicornProjectId} />
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 w-full h-full block touch-none"
+        style={{ background: '#050505' }}
+      />
+      <div className="absolute inset-0 bg-radial-vignette from-transparent via-black/40 to-[#050505] pointer-events-none" />
+      <div className="absolute bottom-0 left-0 right-0 h-48 bg-gradient-to-t from-[#050505] via-[#050505]/70 to-transparent pointer-events-none" />
       
       {/* Hero Content Overlay */}
       <div className="absolute inset-0 z-20 flex flex-col items-center justify-center text-white px-6">
@@ -415,65 +419,110 @@ precision highp float;
 out vec4 O;
 uniform vec2 resolution;
 uniform float time;
-#define FC gl_FragCoord.xy
-#define T time
-#define R resolution
-#define MN min(R.x,R.y)
+uniform vec2 touch;
+uniform vec2 move;
 
-float rnd(vec2 p) {
-  p=fract(p*vec2(12.9898,78.233));
-  p+=dot(p,p+34.56);
-  return fract(p.x*p.y);
+mat2 rot(float a) {
+    float s = sin(a), c = cos(a);
+    return mat2(c, -s, s, c);
+}
+
+float hash(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
 }
 
 float noise(in vec2 p) {
-  vec2 i=floor(p), f=fract(p), u=f*f*(3.-2.*f);
-  float
-  a=rnd(i),
-  b=rnd(i+vec2(1,0)),
-  c=rnd(i+vec2(0,1)),
-  d=rnd(i+1.);
-  return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
 float fbm(vec2 p) {
-  float t=.0, a=1.; mat2 m=mat2(1.,-.5,.2,1.2);
-  for (int i=0; i<5; i++) {
-    t+=a*noise(p);
-    p*=2.*m;
-    a*=.5;
-  }
-  return t;
+    float v = 0.0;
+    float a = 0.55;
+    mat2 m = rot(0.37);
+    for (int i = 0; i < 5; i++) {
+        v += a * noise(p);
+        p = m * p * 2.02;
+        a *= 0.5;
+    }
+    return v;
 }
 
-float clouds(vec2 p) {
-	float d=1., t=.0;
-	for (float i=.0; i<3.; i++) {
-		float a=d*fbm(i*10.+p.x*.2+.2*(1.+i)*p.y+d+i*i+p);
-		t=mix(t,d,a);
-		d=a;
-		p*=2./(i+1.);
-	}
-	return t;
+// Domain Warping for fluid cosmic clouds (Unicorn Studio Nebula Skies)
+float pattern(in vec2 p, out vec2 q, out vec2 r, float t) {
+    q = vec2(fbm(p + vec2(0.0, 0.0) + t * 0.05),
+             fbm(p + vec2(5.2, 1.3) - t * 0.04));
+
+    r = vec2(fbm(p + 3.8 * q + vec2(1.7, 9.2) + t * 0.08),
+             fbm(p + 3.8 * q + vec2(8.3, 2.8) - t * 0.06));
+
+    return fbm(p + 3.6 * r + t * 0.03);
 }
 
-void main(void) {
-	vec2 uv=(FC-.5*R)/MN,st=uv*vec2(2,1);
-	vec3 col=vec3(0);
-	float bg=clouds(vec2(st.x+T*.5,-st.y));
-	uv*=1.-.3*(sin(T*.2)*.5+.5);
-	for (float i=1.; i<12.; i++) {
-		uv+=.1*cos(i*vec2(.1+.01*i, .8)+i*i+T*.5+.1*uv.x);
-		vec2 p=uv;
-		float d=length(p);
-		col+=.00125/d*(cos(sin(i)*vec3(1,2,3))+1.);
-		float b=noise(i+p+bg*1.731);
-		col+=.002*b/length(max(p,vec2(b*p.x*.02,p.y)));
-        
-        // Adjust this mix for color theme (monochrome super dark obsidian feel)
-		col=mix(col,vec3(bg*.05),d);
-	}
-	O=vec4(col,1);
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5 * resolution.xy) / min(resolution.x, resolution.y);
+    
+    // Mouse interaction displacement
+    vec2 mouseNorm = (touch.xy - 0.5 * resolution.xy) / min(resolution.x, resolution.y);
+    float mouseDist = length(uv - mouseNorm);
+    float mousePush = exp(-mouseDist * 3.0);
+    uv += (uv - mouseNorm) * mousePush * 0.15;
+
+    float t = time * 0.12;
+
+    // Cosmic coordinates
+    vec2 p = uv * 2.2;
+    p *= rot(t * 0.05);
+
+    vec2 q, r;
+    float f = pattern(p, q, r, t);
+
+    // Exact Unicorn Studio Nebula Skies Palette
+    // Cyan/Electric Blue: vec3(0.333, 0.976, 1.0)
+    // Deep Violet/Navy: vec3(0.267, 0.314, 0.518)
+    // Accent Magenta Glow: vec3(0.902, 0.0, 0.898)
+    // Void: vec3(0.015, 0.015, 0.02)
+    vec3 colCyan = vec3(0.333, 0.976, 1.0);
+    vec3 colViolet = vec3(0.267, 0.314, 0.518);
+    vec3 colMagenta = vec3(0.902, 0.0, 0.898);
+    vec3 colVoid = vec3(0.015, 0.015, 0.02);
+
+    // Dynamic Color Mixing
+    vec3 col = mix(colVoid, colViolet, clamp(f * f * 2.2, 0.0, 1.0));
+    col = mix(col, colCyan, clamp(length(q) * 1.1, 0.0, 1.0) * smoothstep(0.1, 0.8, f));
+    col += colMagenta * pow(clamp(length(r.x), 0.0, 1.0), 3.0) * 0.75;
+    col += colCyan * pow(clamp(f, 0.0, 1.0), 4.0) * 0.6;
+
+    // Normal map surface lighting
+    float d1 = fbm(p + vec2(0.01, 0.0));
+    float d2 = fbm(p + vec2(0.0, 0.01));
+    vec2 grad = vec2(d1 - f, d2 - f) * 20.0;
+    vec3 lightDir = normalize(vec3(0.5, 0.7, 0.5));
+    vec3 normal = normalize(vec3(-grad, 1.0));
+    float diff = max(0.0, dot(normal, lightDir));
+    col += colCyan * pow(diff, 6.0) * 0.35;
+
+    // Subtle star dust
+    float dust = pow(hash(gl_FragCoord.xy + fract(time * 0.01)), 35.0) * 0.35;
+    col += vec3(dust);
+
+    // Soft vignette
+    float vig = 1.0 - smoothstep(0.4, 1.4, length(uv));
+    col *= vig;
+
+    // Bottom gradient fade into deep obsidian black #050505
+    float bottomFade = smoothstep(0.0, 0.35, gl_FragCoord.y / resolution.y);
+    col *= bottomFade;
+
+    O = vec4(clamp(col, 0.0, 1.0), 1.0);
 }`;
 
 export default Hero;
