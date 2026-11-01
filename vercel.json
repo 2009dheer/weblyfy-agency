@@ -1,5 +1,15 @@
 {
+  "redirects": [
+    {
+      "source": "/explore/:id*",
+      "destination": "/",
+      "permanent": true
+    }
+  ],
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
   ]
 }

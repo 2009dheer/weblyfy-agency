@@ -86,11 +86,14 @@ const Hero: React.FC<HeroProps> = ({
           {/* Main Heading with Animation */}
           <div className="flex flex-col items-center justify-center w-full">
             {logoSrc ? (
-              <img 
-                src={logoSrc} 
-                alt="Logo" 
-                className="absolute top-32 md:top-32 lg:top-32 left-1/2 -translate-x-1/2 w-full max-w-[50vw] md:max-w-[250px] lg:max-w-[300px] object-contain animate-fade-in-up animation-delay-200"
-              />
+              <>
+                <h1 className="sr-only">Weblyfy - High-Performance Digital Agency</h1>
+                <img 
+                  src={logoSrc} 
+                  alt="Weblyfy - Digital Agency" 
+                  className="absolute top-32 md:top-32 lg:top-32 left-1/2 -translate-x-1/2 w-full max-w-[50vw] md:max-w-[250px] lg:max-w-[300px] object-contain animate-fade-in-up animation-delay-200"
+                />
+              </>
             ) : headline ? (
               <h1 className="font-display font-[500] text-[18vw] leading-[0.8] tracking-tighter uppercase text-white animate-fade-in-up animation-delay-200">
                 {headline.line1}

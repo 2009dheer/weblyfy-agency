@@ -6,7 +6,7 @@
 import { motion, useScroll, useTransform, AnimatePresence } from 'motion/react';
 import { Menu, X, MessageCircle, Star, ArrowUpRight, ArrowLeft } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, useNavigate, useParams, Link } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useNavigate, useParams, Link, Navigate } from 'react-router-dom';
 import Hero from './components/ui/animated-shader-hero';
 import ShaderBackground from './components/ui/shader-background';
 import { ShaderCanvas, SHADER_SRC as NEW_SHADER } from './components/ui/launch';
@@ -298,7 +298,7 @@ function Navigation() {
 }
 
 
-function Section({ data, index }: { data: typeof SECTIONS[0], index: number }) {
+function Section({ data, index, onExplore }: { data: typeof SECTIONS[0], index: number, onExplore?: (id: string) => void }) {
   const isCenter = data.titleAlign === 'center';
   const navigate = useNavigate();
   
@@ -336,7 +336,11 @@ function Section({ data, index }: { data: typeof SECTIONS[0], index: number }) {
             </p>
             <button 
               onClick={() => {
-                navigate(`/explore/${data.id}`);
+                if (onExplore) {
+                  onExplore(data.id);
+                } else {
+                  navigate(`/#${data.id}`);
+                }
               }}
               className="flex items-center gap-2 text-xs font-[600] tracking-[0.2em] uppercase text-white hover:text-cyan-400 transition-colors w-fit border-b border-white/40 hover:border-cyan-400 pb-1.5 group mt-1"
             >
@@ -632,18 +636,152 @@ function Loader() {
   );
 }
 
+const CAPABILITIES_DATA: Record<string, {
+  title: string;
+  subtitle: string;
+  paragraphs: string[];
+  capabilities: string[];
+}> = {
+  platforms: {
+    title: "need amazing\nplatforms",
+    subtitle: "Empowering businesses to stand out with strategy, creativity, and high-performing websites and web applications.",
+    paragraphs: [
+      "At Weblyfy, we understand that platforms are more than just technology; they are the foundation of your digital presence and operational scale. Our approach dives deep into the core mechanics of your business to engineer custom solutions that simply work beautifully.",
+      "From robust architecture to pixel-perfect design, our expert team utilizes modern frameworks and relentless innovation to bring your vision to life. No templates, no compromises."
+    ],
+    capabilities: [
+      "Strategy & Architecture",
+      "Custom Engineering",
+      "Seamless Integration",
+      "Continuous Optimization"
+    ]
+  },
+  ai: {
+    title: "exceptional\nby design",
+    subtitle: "We craft distinct, conversational AI Agents and Calling Bots that handle interactions 24/7, elevating your customer experience.",
+    paragraphs: [
+      "At Weblyfy, we engineer intelligent voice agents and conversational AI that represent your brand with perfection. Whether handling inbound inquiries or qualifying leads, our bots speak naturally and deliver results around the clock.",
+      "Powered by advanced LLMs, real-time voice latency optimization, and custom CRM integrations, your AI agents become your most dependable team members."
+    ],
+    capabilities: [
+      "Conversational AI Architecture",
+      "Real-time Calling Bots",
+      "CRM & Pipeline Integration",
+      "24/7 Omnichannel Deployment"
+    ]
+  },
+  automation: {
+    title: "powerful\nautomation",
+    subtitle: "We design impactful WhatsApp Automations and connected workflows, shaping your operations and amplifying efficiency.",
+    paragraphs: [
+      "Scale your customer conversations and operational speed with customized WhatsApp automations and interconnected business workflows designed to eliminate manual bottlenecks.",
+      "From automatic lead capture to automated follow-ups and notifications, we transform your customer journey into a frictionless, high-converting pipeline."
+    ],
+    capabilities: [
+      "WhatsApp Business API Setup",
+      "Interactive Chat Flows",
+      "Connected Webhook Triggers",
+      "Automated Lead Qualification"
+    ]
+  }
+};
+
+function CapabilitiesModal({ 
+  sectionId, 
+  onClose 
+}: { 
+  sectionId: string; 
+  onClose: () => void 
+}) {
+  const data = CAPABILITIES_DATA[sectionId];
+  if (!data) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xl flex items-center justify-center p-4 sm:p-6"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+        className="relative w-full max-w-2xl bg-[#0e0e0e] border border-white/10 rounded-3xl p-6 sm:p-10 shadow-2xl text-white max-h-[90vh] overflow-y-auto no-scrollbar"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          onClick={onClose}
+          className="absolute top-5 right-5 sm:top-7 sm:right-7 w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+          aria-label="Close"
+        >
+          <X className="w-5 h-5" />
+        </button>
+
+        <span className="text-xs uppercase tracking-widest text-cyan-400 font-mono mb-2 block">
+          Weblyfy Capabilities
+        </span>
+
+        <h2 className="font-serif italic font-[300] text-3xl sm:text-4xl lg:text-5xl tracking-tight leading-[1] mb-4 whitespace-pre-line">
+          {data.title}
+        </h2>
+
+        <p className="text-white/80 font-sans text-base sm:text-lg mb-8 leading-relaxed">
+          {data.subtitle}
+        </p>
+
+        <div className="space-y-4 text-white/70 font-sans text-sm sm:text-base leading-relaxed mb-8">
+          {data.paragraphs.map((p, i) => (
+            <p key={i}>{p}</p>
+          ))}
+        </div>
+
+        <div className="p-6 rounded-2xl bg-white/5 border border-white/10 mb-8">
+          <h3 className="text-xs uppercase tracking-widest text-white/50 font-sans font-semibold mb-4">
+            Core Capabilities
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {data.capabilities.map((cap, i) => (
+              <div key={i} className="flex items-center gap-2.5 text-sm text-neutral-200">
+                <div className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+                <span>{cap}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <a
+          href={`https://wa.me/918096000080?text=${encodeURIComponent(`Hi Weblyfy, I would like to learn more about your ${data.title.replace('\n', ' ')} solutions.`)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="w-full bg-white hover:bg-neutral-200 text-black font-semibold text-xs uppercase tracking-widest py-4 px-6 rounded-xl flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-[0.99]"
+        >
+          <span>Start a WhatsApp Conversation</span>
+          <ArrowUpRight className="w-4 h-4" />
+        </a>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 let initialLoadComplete = false;
 
 function MainScreen() {
   const [loading, setLoading] = useState(!initialLoadComplete);
+  const [activeModal, setActiveModal] = useState<string | null>(null);
 
   useEffect(() => {
+    window.scrollTo(0, 0);
+    if ('scrollRestoration' in history) {
+      history.scrollRestoration = 'manual';
+    }
     if (initialLoadComplete) return;
-    // Wait for the window to fully load and run a small timer
     const timer = setTimeout(() => {
       setLoading(false);
       initialLoadComplete = true;
-    }, 2500); // 2.5 seconds loading time for the animation to play
+    }, 2500);
     return () => clearTimeout(timer);
   }, []);
 
@@ -652,6 +790,14 @@ function MainScreen() {
       <AnimatePresence>
         {loading && <Loader />}
       </AnimatePresence>
+      <AnimatePresence>
+        {activeModal && (
+          <CapabilitiesModal 
+            sectionId={activeModal} 
+            onClose={() => setActiveModal(null)} 
+          />
+        )}
+      </AnimatePresence>
       <Navigation />
       <div className="relative w-full min-h-screen">
         <Hero
@@ -659,103 +805,15 @@ function MainScreen() {
         />
       </div>
       {SECTIONS.map((section, idx) => (
-         <Section key={section.id} data={section} index={idx} />
+         <Section 
+           key={section.id} 
+           data={section} 
+           index={idx} 
+           onExplore={(id) => setActiveModal(id)}
+         />
       ))}
       <WorkSection />
       <ContactSection />
-    </div>
-  )
-}
-
-function ExplorePage() {
-  const { id } = useParams();
-  const section = SECTIONS.find(s => s.id === id);
-
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, [id]);
-
-  if (!section) {
-    return (
-      <div className="bg-[#050505] min-h-screen text-white flex items-center justify-center">
-        <Navigation />
-        <h1 className="text-2xl font-display uppercase tracking-widest text-[#666]">Not Found</h1>
-      </div>
-    );
-  }
-
-  return (
-    <div className="bg-[#050505] min-h-screen flex flex-col relative text-white">
-      <Navigation />
-      
-      {/* Background Component based on Section */}
-      <div className="fixed inset-0 z-0 opacity-40">
-        {section.id === 'platforms' ? (
-          <CreationOfAdamBackground opacity={0.45} />
-        ) : section.id === 'ai' ? (
-          <PerspectiveAsciiBackground opacity={0.45} />
-        ) : section.id === 'automation' ? (
-          <NeuralBackground color="#818cf8" trailOpacity={0.1} speed={0.8} />
-        ) : null}
-      </div>
-
-      <div className="relative z-10 w-full max-w-screen-xl mx-auto px-6 md:px-12 pt-32 pb-24 min-h-screen flex flex-col">
-        <Link to="/" className="flex items-center gap-2 text-white/50 hover:text-white transition-colors w-fit mb-16 group uppercase tracking-widest text-xs font-medium">
-          <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-          Back to Home
-        </Link>
-
-        <motion.div
-           initial={{ opacity: 0, y: 30 }}
-           animate={{ opacity: 1, y: 0 }}
-           transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-           className="max-w-4xl"
-        >
-          <h1 className="text-4xl sm:text-6xl md:text-8xl lg:text-[7rem] font-display font-[500] uppercase tracking-tighter leading-[0.85] mb-8" style={{ whiteSpace: 'pre-line' }}>
-            {section.title}
-          </h1>
-          <p className="text-xl md:text-2xl lg:text-3xl font-sans font-[300] leading-relaxed text-white/80 max-w-3xl mb-16">
-            {section.subtitle}
-          </p>
-          
-          <div className="h-[1px] w-full bg-white/10 mb-16" />
-
-          {/* Detailed Content */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-12 text-white/70 font-sans leading-relaxed text-lg">
-            <div>
-              <p className="mb-6">
-                At Weblyfy, we understand that {section.id} is more than just technology; it's the foundation of your digital presence and operational scale. Our approach dives deep into the core mechanics of your business to engineer custom solutions that simply work beautifully.
-              </p>
-              <p>
-                From robust architecture to pixel-perfect design, our expert team utilizes modern frameworks and relentless innovation to bring your vision to life. No templates, no compromises.
-              </p>
-            </div>
-            <div>
-              <div className="p-8 border border-white/10 rounded-2xl bg-white/5 backdrop-blur-sm">
-                <h3 className="text-white font-display uppercase tracking-widest text-sm mb-4">Core Capabilities</h3>
-                <ul className="space-y-3">
-                  <li className="flex items-center gap-3">
-                    <div className="w-1.5 h-1.5 rounded-full bg-white/50" />
-                    Strategy & Architecture
-                  </li>
-                  <li className="flex items-center gap-3">
-                    <div className="w-1.5 h-1.5 rounded-full bg-white/50" />
-                    Custom Engineering
-                  </li>
-                  <li className="flex items-center gap-3">
-                    <div className="w-1.5 h-1.5 rounded-full bg-white/50" />
-                    Seamless Integration
-                  </li>
-                  <li className="flex items-center gap-3">
-                    <div className="w-1.5 h-1.5 rounded-full bg-white/50" />
-                    Continuous Optimization
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        </motion.div>
-      </div>
     </div>
   );
 }
@@ -765,7 +823,8 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<MainScreen />} />
-        <Route path="/explore/:id" element={<ExplorePage />} />
+        <Route path="/explore/:id" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );

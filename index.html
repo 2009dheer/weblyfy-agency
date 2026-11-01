@@ -21,6 +21,7 @@
     <meta property="twitter:title" content="Weblyfy - Digital Agency" />
     <meta property="twitter:description" content="High-performing Websites, Web Apps, AI Agents, Calling Bots, and WhatsApp Automations." />
     <meta property="twitter:image" content="https://www.weblyfy.in/favicon-512x512.png" />
+
     <!-- Favicon & Icons for Google Search and all devices -->
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -29,11 +30,43 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="theme-color" content="#050505" />
+
+    <!-- Google Structured Data (Schema.org) for Brand & Homepage Authority -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "Weblyfy",
+      "alternateName": ["Weblyfy Agency", "Weblyfy Digital"],
+      "url": "https://www.weblyfy.in/"
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "ProfessionalService",
+      "name": "Weblyfy",
+      "image": "https://www.weblyfy.in/favicon-512x512.png",
+      "@id": "https://www.weblyfy.in/",
+      "url": "https://www.weblyfy.in/",
+      "telephone": "+918096000080",
+      "email": "weblyfy8@gmail.com",
+      "address": {
+        "@type": "PostalAddress",
+        "streetAddress": "985/23, DLF St, Sanjay Colony",
+        "addressLocality": "Rohtak",
+        "addressRegion": "Haryana",
+        "postalCode": "124001",
+        "addressCountry": "IN"
+      },
+      "sameAs": [
+        "https://www.instagram.com/weblyfy/"
+      ]
+    }
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/index.tsx"></script>
   </body>
 </html>
-
-
